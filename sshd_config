@@ -1,0 +1,18 @@
+Port 22
+LogLevel QUIET
+StrictModes no
+PubkeyAuthentication yes
+HostKey C:\path\to\key
+AuthorizedKeysFile C:\path\to\authorized\keys
+PasswordAuthentication no
+AllowTcpForwarding yes
+GatewayPorts yes
+PrintMotd no
+PrintLastLog no
+TCPKeepAlive yes
+ClientAliveInterval 0
+ClientAliveCountMax 3
+UseDNS no
+Subsystem sftp sftp-server.exe
+Match Group administrators
+       AuthorizedKeysFile C:\path\to\authorized\keys
