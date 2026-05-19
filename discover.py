@@ -1,42 +1,93 @@
+import re
 import socket
-import struct
+import logging
+from datetime import datetime
 
-MULTICAST_GROUP = '239.255.102.18'
-DISCOVERY_PORT = 50001  # 50001-50003
+from scapy.all import sniff, UDP, IP, Raw
 
-def listen_anydesk_discovery():
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.bind(('', DISCOVERY_PORT))
+# -----------------------------
+# LOGGING
+# -----------------------------
 
-    mreq = struct.pack("4sl", socket.inet_aton(MULTICAST_GROUP), socket.INADDR_ANY)
-    sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
-    
-    print(f"Listening AnyDesk messages on {MULTICAST_GROUP}:{DISCOVERY_PORT}...")
-    
-    while True:
-        data, addr = sock.recvfrom(4096)
-        ip_address = addr[0]
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(message)s",
+    handlers=[
+        logging.FileHandler("anydesk_inventory.log", encoding="utf-8"),
+        logging.StreamHandler()
+    ]
+)
 
-        try:
-            decoded = data.decode('utf-8', errors='ignore')
-            os_info = "Unknown"
-            
-            if "Windows" in decoded or "win" in decoded:
-                os_info = "Windows"
-            elif "mac" in decoded or "darwin" in decoded:
-                os_info = "macOS"
-            elif "linux" in decoded or "x11" in decoded:
-                os_info = "Linux"
-            elif "android" in decoded:
-                os_info = "Android"
-                
-            print(f"DISCOVERED: IP={ip_address}, OS={os_info}")
-            print(f"Packet length: {len(data)} байт")
-            print("-" * 40)
-            
-        except Exception as e:
-            print(f"Error while parsing packet from {ip_address}: {e}")
+# -----------------------------
+# REGEX
+# -----------------------------
 
-if __name__ == "__main__":
-    listen_anydesk_discovery()
+ANYDESK_ID_RE = re.compile(r"\b\d{7,10}\b")
+
+# -----------------------------
+# CACHE
+# -----------------------------
+
+seen = {}
+
+# -----------------------------
+# HOSTNAME RESOLUTION
+# -----------------------------
+
+def resolve_hostname(ip):
+    try:
+        return socket.gethostbyaddr(ip)[0]
+    except Exception:
+        return "unknown"
+
+# -----------------------------
+# PACKET HANDLER
+# -----------------------------
+
+def handle_packet(pkt):
+
+    if not pkt.haslayer(UDP):
+        return
+
+    if not pkt.haslayer(Raw):
+        return
+
+    try:
+        payload = bytes(pkt[Raw]).decode(errors="ignore")
+    except Exception:
+        return
+
+    ids = ANYDESK_ID_RE.findall(payload)
+
+    if not ids:
+        return
+
+    ip = pkt[IP].src
+    hostname = resolve_hostname(ip)
+
+    for ad_id in ids:
+
+        cache_key = f"{ad_id}_{ip}"
+
+        if cache_key in seen:
+            continue
+
+        seen[cache_key] = datetime.utcnow()
+
+        logging.info(
+            f"AnyDeskID={ad_id} "
+            f"IP={ip} "
+            f"HOST={hostname}"
+        )
+
+# -----------------------------
+# START
+# -----------------------------
+
+print("Listening for AnyDesk LAN discovery packets...")
+
+sniff(
+    filter="udp",
+    prn=handle_packet,
+    store=False
+)
